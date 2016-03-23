@@ -21,8 +21,8 @@ function run_tests() {
     ln -s "${TEST_LOGS_DIR}" logs
     for PCL_PARALLEL in 1 2 5 10 20 50 100 200 500 1000 ; do
       if [ -f "${TEST_LOGS_DIR}/${PCL_PARALLEL}/sar" ]; then
-        echo "'${TEST_LOGS_DIR}/${PCL_PARALLEL}/sar' already exists, skipping this run"
-        continue
+        echo "'${TEST_LOGS_DIR}/${PCL_PARALLEL}/sar' already exists, adding to this run"
+        #continue
       fi
       echo "Running $TESTNAME with $PCL_PARALLEL threads"
       export PCL_PARALLEL

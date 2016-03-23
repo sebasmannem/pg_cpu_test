@@ -51,5 +51,5 @@ for PCL_TYPE in "${ARR_PCL_TYPES[@]}"; do
 done
 su - postgres bash -c "pg_ctl stop -D ${PGDATA}"
 kill ${SARPID} > /dev/null 2>&1
-sar -A > "${PCL_LOGDIR}/sar"
-cp /var/log/sa/sa* "${PCL_LOGDIR}/"
+sar -A >> "${PCL_LOGDIR}/sar"
+cp --backup=t /var/log/sa/sa* "${PCL_LOGDIR}/"
