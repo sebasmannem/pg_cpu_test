@@ -1,0 +1,10 @@
+[package]
+name = "pg_cpu_load"
+version = "0.1.0"
+authors = ["Sebastiaan Mannem <sebastiaan.mannem@enterprisedb.com>"]
+edition = "2018"
+
+[dependencies]
+postgres = "0.15"
+args = "2.2.0"
+getopts = "0.2.18"
