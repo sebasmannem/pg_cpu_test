@@ -123,8 +123,8 @@ fn connect(connect_string: String, initialization: u8, thread_id: u32) -> Result
     loop {
         match Connection::connect(connect_string.clone(), TlsMode::None) {
             Ok(my_conn) => conn = my_conn,
-            Err(err) => {
-                println!("Error: {}", &err);
+            Err(_) => {
+                //println!("Error: {}", &err);
                 continue;
             },
         };
@@ -149,8 +149,8 @@ fn reconnect(connect_string: &String, initialization: u8, thread_id: u32) -> Con
     loop {
         match connect(connect_string.clone(), initialization, thread_id) {
             Ok(my_conn) => conn = my_conn,
-            Err(err) => {
-                println!("Error: {}", &err);
+            Err(_) => {
+                //println!("Error: {}", &err);
                 continue;
             },
         };
@@ -235,15 +235,40 @@ fn thread(thread_id: u32, tx: mpsc::Sender<f32>, thread_lock: std::sync::Arc<std
                 tx.send(sample_tps)?;
                 tps = sample_tps as u64;
             },
-            Err(err) => {
-                println!("Error: {}", &err);
-                thread::sleep(Duration::from_millis(1000));
+            Err(_) => {
+                //println!("Error: {}", &err);
+                thread::sleep(Duration::new(1, 0));
                 conn = reconnect(&connect_string, initialization, thread_id);
             },
         };
 
     }
     // println!("Thread {} stopped", thread_id);
+    Ok(())
+}
+
+fn downscale(rx: mpsc::Receiver<f32>, tx: mpsc::Sender<f32>, thread_lock: std::sync::Arc<std::sync::RwLock<bool>>) -> Result<(), Box<std::error::Error>>{
+    //With more threads (> 500) we have some issues, where the one main thread cannot consume messages fast enough.
+    //This function can downscal from 25 messages to 1 message.
+    let mut sum: f32;
+    loop {
+        if let Ok(done) = thread_lock.read() {
+            // done is true when main thread decides we are there
+            if *done {
+                break;
+            }
+        }
+        sum = 0_f32;
+        for _ in 0..25 {
+            match rx.recv_timeout(Duration::from_millis(10)) {
+                Ok(sample_tps) => {
+                    sum += sample_tps;
+                },
+                Err(_err) => (),
+            };
+        }
+        tx.send(sum)?;
+    }
     Ok(())
 }
 
@@ -276,20 +301,63 @@ fn main() -> Result<(), Box<std::error::Error>> {
     let (tx, rx) = mpsc::channel();
     let rw_lock = Arc::new(RwLock::new(false));
     let mut threads = Vec::with_capacity(num_threads as usize);
+    let mut num_samples: u32;
 
-    for thread_id in 0..num_threads {
-        let thread_tx = tx.clone();
-        let thread_lock = rw_lock.clone();
-        let thread_handle =  thread::spawn(move || {
-            thread(thread_id, thread_tx, thread_lock).unwrap();
-        });
-        threads.push(thread_handle);
+    if num_threads < 200 {
+        for thread_id in 0..num_threads {
+            let thread_tx = tx.clone();
+            let thread_lock = rw_lock.clone();
+            let thread_handle =  thread::spawn(move || {
+                thread(thread_id, thread_tx, thread_lock).unwrap();
+            });
+            threads.push(thread_handle);
+        }
+        num_samples = num_threads / 10;
+    } else {
+        let mut downscale_threads = Vec::with_capacity(num_threads as usize);
+        let (tmp_tx, tmp_rx) = mpsc::channel();
+        #[allow(unused_assignments)]
+        let mut downscale_rx: mpsc::Receiver<f32> = tmp_rx;
+        let mut downscale_tx: mpsc::Sender<f32> = tmp_tx;
+        for thread_id in 0..num_threads {
+            if thread_id % 100 == 0 {
+                let (tmp_tx, tmp_rx) = mpsc::channel();
+                downscale_rx = tmp_rx;
+                downscale_tx = tmp_tx;
+                let thread_lock = rw_lock.clone();
+                let thread_tx = tx.clone();
+                let thread_handle =  thread::spawn(move || {
+                    downscale(downscale_rx, thread_tx, thread_lock).unwrap();
+                });
+                downscale_threads.push(thread_handle);
+            }
+            let thread_tx = downscale_tx.clone();
+            let thread_lock = rw_lock.clone();
+            let thread_handle =  thread::spawn(move || {
+                thread(thread_id, thread_tx, thread_lock).unwrap();
+            });
+            threads.push(thread_handle);
+        }
+        num_samples = num_threads / 250;
+    }
+    if num_samples < 1 {
+        num_samples = 1
     }
     for _ in 0..num_secs {
         sum_tps = 0_f32;
         let start = SystemTime::now();
-        for _thread_id in 0..num_threads {
-             sum_tps += rx.recv()?;
+        let finished = start + Duration::new(1, 0);
+        loop {
+            for _ in 0..num_samples {
+                match rx.recv() {
+                    Ok(sample_tps) => sum_tps += sample_tps,
+                    Err(_error) => break,
+                }
+            }
+            let now = SystemTime::now();
+            if now > finished {
+                break;
+            }
         }
         let end = SystemTime::now();
         let duration_nanos = end.duration_since(start)
