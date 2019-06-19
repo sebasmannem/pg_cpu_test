@@ -6,7 +6,7 @@ use postgres::{Connection, TlsMode};
 use std::{env, process};
 use getopts::Occur;
 use args::Args;
-use std::time::SystemTime;
+use std::time::{SystemTime, Duration};
 use std::thread;
 use std::sync::{mpsc, RwLock, Arc};
 use std::str::FromStr;
@@ -116,6 +116,79 @@ fn parse_args() -> Result<args::Args, args::ArgsError> {
     Ok(args)
 }
 
+//fn connect(thread_id: u32, tx: mpsc::Sender<f32>, thread_lock: std::sync::Arc<std::sync::RwLock<bool>> ) -> Result<(), Box<std::error::Error>>{
+fn connect(connect_string: String, initialization: u8, thread_id: u32) -> Result<Connection, postgres::Error> {
+
+    let mut conn: Connection;
+    loop {
+        match Connection::connect(connect_string.clone(), TlsMode::None) {
+            Ok(my_conn) => conn = my_conn,
+            Err(err) => {
+                println!("Error: {}", &err);
+                continue;
+            },
+        };
+        break;
+    }
+
+    if initialization == 1 {
+        conn.execute("create temporary table my_temp_table (id oid)", &[])?;
+        conn.execute("insert into my_temp_table values($1)", &[&thread_id])?;
+    } else if initialization == 2 {
+        conn.execute(&format!("create table if not exists my_table_{} (id oid)", thread_id), &[])?;
+        conn.execute(&format!("truncate my_table_{}", thread_id), &[])?;
+        conn.execute(&format!("insert into my_table_{} values($1)", thread_id), &[&thread_id])?;
+    }
+
+    Ok(conn)
+}
+
+fn reconnect(connect_string: &String, initialization: u8, thread_id: u32) -> Connection {
+
+    let mut conn: Connection;
+    loop {
+        match connect(connect_string.clone(), initialization, thread_id) {
+            Ok(my_conn) => conn = my_conn,
+            Err(err) => {
+                println!("Error: {}", &err);
+                continue;
+            },
+        };
+        break;
+    }
+
+    conn
+}
+
+fn sample(conn: &Connection, query: &String, num_queries: u64, stype: &String, thread_id: u32) -> Result<f32, postgres::Error> {
+   let start = SystemTime::now();
+   for _x in 1..num_queries {
+       if stype == "prepared" {
+           let prep = conn.prepare_cached(&query)?;
+           let _row = prep.query(&[&thread_id]);
+       } else if stype == "transactional" {
+           let trans = conn.transaction()?;
+           if query != "" {
+               let _row = trans.query(&query, &[&thread_id]);
+           }
+           let _res = trans.commit()?;
+       } else if stype == "prepared_transactional" {
+           let trans = conn.transaction()?;
+           if query != "" {
+               let prep = trans.prepare_cached(&query)?;
+               let _row = prep.query(&[&thread_id]);
+           }
+           let _res = trans.commit()?;
+       } else if query != "" {
+           let _row = &conn.query(&query, &[&thread_id]);
+       }
+   }
+   let end = SystemTime::now();
+   let duration_nanos = end.duration_since(start)
+       .expect("Time went backwards").as_nanos();
+   Ok(10.0_f32.powi(9) * num_queries as f32 / duration_nanos as f32)
+}
+
 fn thread(thread_id: u32, tx: mpsc::Sender<f32>, thread_lock: std::sync::Arc<std::sync::RwLock<bool>> ) -> Result<(), Box<std::error::Error>>{
     // println!("Thread {} started", thread_id);
     let args = parse_args()?;
@@ -133,24 +206,23 @@ fn thread(thread_id: u32, tx: mpsc::Sender<f32>, thread_lock: std::sync::Arc<std
         _ => panic!("Option QTYPE should be one of empty, simple, read, write (not {}).", qtype),
     }
 
-
     let connect_string = postgres_connect_string(args);
     if thread_id == 0 {
         println!("Connectstring: {}", connect_string);
         println!("Query: {}", query);
         println!("SType: {}", stype);
     }
-    let conn = Connection::connect(connect_string, TlsMode::None)?;
     let mut tps: u64 = 1000;
+    let mut initialization: u8 = 0;
 
     if qtype == "temp_read" || qtype == "temp_write" {
-        conn.execute("create temporary table my_temp_table (id oid)", &[])?;
-        conn.execute("insert into my_temp_table values($1)", &[&thread_id])?;
+        initialization = 1;
     } else if qtype == "read" || qtype == "write" {
-        conn.execute(&format!("create table if not exists my_table_{} (id oid)", thread_id), &[])?;
-        conn.execute(&format!("truncate my_table_{}", thread_id), &[])?;
-        conn.execute(&format!("insert into my_table_{} values($1)", thread_id), &[&thread_id])?;
+        initialization = 2;
     }
+
+    let mut conn: Connection;
+    conn = reconnect(&connect_string, initialization, thread_id);
     loop {
         if let Ok(done) = thread_lock.read() {
             // done is true when main thread decides we are there
@@ -158,34 +230,18 @@ fn thread(thread_id: u32, tx: mpsc::Sender<f32>, thread_lock: std::sync::Arc<std
                 break;
             }
         }
-        let start = SystemTime::now();
-        for _x in 1..tps {
-            if stype == "prepared" {
-                let prep = conn.prepare_cached(&query)?;
-                let _row = prep.query(&[&thread_id]);
-            } else if stype == "transactional" {
-                let trans = conn.transaction()?;
-                if qtype != "empty" {
-                    let _row = trans.query(&query, &[&thread_id]);
-                }
-                let _res = trans.commit()?;
-            } else if stype == "prepared_transactional" {
-                let trans = conn.transaction()?;
-                if qtype != "empty" {
-                    let prep = trans.prepare_cached(&query)?;
-                    let _row = prep.query(&[&thread_id]);
-                }
-                let _res = trans.commit()?;
-            } else if qtype != "empty" {
-                let _row = &conn.query(&query, &[&thread_id]);
-            }
-        }
-        let end = SystemTime::now();
-        let duration_nanos = end.duration_since(start)
-            .expect("Time went backwards").as_nanos();
-        let calc_tps = 10.0_f32.powi(9) * tps as f32 / duration_nanos as f32;
-        tx.send(calc_tps)?;
-        tps = calc_tps as u64;
+        match sample(&conn, &query, tps, &stype, thread_id) {
+            Ok(sample_tps) => {
+                tx.send(sample_tps)?;
+                tps = sample_tps as u64;
+            },
+            Err(err) => {
+                println!("Error: {}", &err);
+                thread::sleep(Duration::from_millis(1000));
+                conn = reconnect(&connect_string, initialization, thread_id);
+            },
+        };
+
     }
     // println!("Thread {} stopped", thread_id);
     Ok(())
@@ -242,7 +298,7 @@ fn main() -> Result<(), Box<std::error::Error>> {
         let calc_tps = sum_tps as f32 / duration as f32;
         avg_tps = calc_tps / num_threads as f32;
         println!("Average tps: {}", avg_tps);
-        println!("Total tps: {}", sum_tps);
+        println!("Total tps: {}", calc_tps);
         println!("Timeframe (s): {}", duration);
     }
 
