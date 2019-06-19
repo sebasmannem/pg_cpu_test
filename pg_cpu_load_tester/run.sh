@@ -3,6 +3,12 @@ set -e
 PGDATA=${PGDATA:-/var/lib/pgsql/11/data}
 PGCONF=${PGCONF:-/host/conf.d}
 PCL_PARALLEL=${PCL_PARALLEL:-10}
+
+PCL_TYPES=${PCL_TYPES:-"empty simple temp_read temp_write read write"}
+read -ra ARR_PCL_TYPES <<< "${PCL_TYPES}"
+PCL_MODES=${PCL_MODES:-"direct prepared transactional prepared_transactional"}
+read -ra ARR_PCL_MODES <<< "${PCL_MODES}"
+
 mkdir -p "${PGDATA}"
 chown -R postgres: "${PGDATA}"
 PCL_LOGDIR=${PCL_LOGDIR:-/host/logs/$(date +%s)}
@@ -19,8 +25,8 @@ fi
 echo "max_connections = $((PCL_PARALLEL+20))" >> "${PGDATA}/postgresql.conf"
 su - postgres bash -c "pg_ctl start -D ${PGDATA} && { until pg_isready; do sleep 1; done ; }"
 set > "${PCL_LOGDIR}/env"
-for PCL_TYPE in empty simple temp_read temp_write read write; do
-	for PCL_MODE in direct prepared transactional prepared_transactional; do
+for PCL_TYPE in "${ARR_PCL_TYPES[@]}"; do
+	for PCL_MODE in "${ARR_PCL_MODES[@]}"; do
 		[ "${PCL_TYPE}" = 'empty' -a "${PCL_MODE}" = 'direct' -o "${PCL_MODE}" = 'prepared' ] && continue
 		CMD="/pg_cpu_load_c7"
 		CMD+=" --parallel ${PCL_PARALLEL:-10}"

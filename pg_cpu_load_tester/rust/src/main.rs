@@ -158,7 +158,7 @@ fn thread(thread_id: u32, tx: mpsc::Sender<f32>, thread_lock: std::sync::Arc<std
                 break;
             }
         }
-        let start = SystemTime::now();    
+        let start = SystemTime::now();
         for _x in 1..tps {
             if stype == "prepared" {
                 let prep = conn.prepare_cached(&query)?;
@@ -231,12 +231,19 @@ fn main() -> Result<(), Box<std::error::Error>> {
     }
     for _ in 0..num_secs {
         sum_tps = 0_f32;
+        let start = SystemTime::now();
         for _thread_id in 0..num_threads {
              sum_tps += rx.recv()?;
         }
-        avg_tps = sum_tps / num_threads as f32;
+        let end = SystemTime::now();
+        let duration_nanos = end.duration_since(start)
+            .expect("Time went backwards").as_nanos();
+        let duration = duration_nanos as f32 / 10.0_f32.powi(9);
+        let calc_tps = sum_tps as f32 / duration as f32;
+        avg_tps = calc_tps / num_threads as f32;
         println!("Average tps: {}", avg_tps);
         println!("Total tps: {}", sum_tps);
+        println!("Timeframe (s): {}", duration);
     }
 
     let main_lock = rw_lock.clone();

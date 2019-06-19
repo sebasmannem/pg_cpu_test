@@ -3,7 +3,7 @@ set -e
 chmod +x /builder.sh /run.sh /pg_cpu_load_c7
 
 yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm
-yum install -y postgresql11-server
+yum install -y postgresql11-server python-psycopg2
 echo 'export PGDATA=/var/lib/pgsql/11/data
 export PGDATABASE=postgres
 export PGHOST=127.0.0.1
