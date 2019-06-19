@@ -16,7 +16,7 @@ if [ -d "${PGCONF}" ]; then
 	chown -R postgres: "${PGCONFDEST}"
 	echo "include_dir '${PGCONFDEST}'" >> "${PGDATA}/postgresql.conf"
 fi
-echo "max_connections = $((PCL_PARALLEL+10))" >> "${PGDATA}/postgresql.conf"
+echo "max_connections = $((PCL_PARALLEL+20))" >> "${PGDATA}/postgresql.conf"
 su - postgres bash -c "pg_ctl start -D ${PGDATA} && { until pg_isready; do sleep 1; done ; }"
 set > "${PCL_LOGDIR}/env"
 for PCL_TYPE in empty simple temp_read temp_write read write; do
