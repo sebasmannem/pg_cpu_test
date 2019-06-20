@@ -300,8 +300,10 @@ fn main() -> Result<(), Box<std::error::Error>> {
 
     let (tx, rx) = mpsc::channel();
     let rw_lock = Arc::new(RwLock::new(false));
+    let rw_downscaler_lock = Arc::new(RwLock::new(false));
     let mut threads = Vec::with_capacity(num_threads as usize);
     let mut num_samples: u32;
+    let mut downscale_threads = Vec::with_capacity(num_threads as usize);
 
     if num_threads < 200 {
         for thread_id in 0..num_threads {
@@ -314,7 +316,6 @@ fn main() -> Result<(), Box<std::error::Error>> {
         }
         num_samples = num_threads / 10;
     } else {
-        let mut downscale_threads = Vec::with_capacity(num_threads as usize);
         let (tmp_tx, tmp_rx) = mpsc::channel();
         #[allow(unused_assignments)]
         let mut downscale_rx: mpsc::Receiver<f32> = tmp_rx;
@@ -324,7 +325,7 @@ fn main() -> Result<(), Box<std::error::Error>> {
                 let (tmp_tx, tmp_rx) = mpsc::channel();
                 downscale_rx = tmp_rx;
                 downscale_tx = tmp_tx;
-                let thread_lock = rw_lock.clone();
+                let thread_lock = rw_downscaler_lock.clone();
                 let thread_tx = tx.clone();
                 let thread_handle =  thread::spawn(move || {
                     downscale(downscale_rx, thread_tx, thread_lock).unwrap();
@@ -379,6 +380,18 @@ fn main() -> Result<(), Box<std::error::Error>> {
     for thread_handle in threads {
         thread_handle.join().unwrap();
     }
+
+    if num_threads >= 200 {
+        let main_downscaler_lock = rw_downscaler_lock.clone();
+        if let Ok(mut done) = main_downscaler_lock.write() {
+            // println!("Stopping all threads");
+            *done = true;
+        }
+        for thread_handle in downscale_threads {
+            thread_handle.join().unwrap();
+        }
+    }
+
 
     Ok(())
 }
