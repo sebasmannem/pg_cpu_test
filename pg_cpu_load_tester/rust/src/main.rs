@@ -116,7 +116,6 @@ fn parse_args() -> Result<args::Args, args::ArgsError> {
     Ok(args)
 }
 
-//fn connect(thread_id: u32, tx: mpsc::Sender<f32>, thread_lock: std::sync::Arc<std::sync::RwLock<bool>> ) -> Result<(), Box<std::error::Error>>{
 fn connect(connect_string: String, initialization: u8, thread_id: u32) -> Result<Connection, postgres::Error> {
 
     let mut conn: Connection;
@@ -160,36 +159,36 @@ fn reconnect(connect_string: &String, initialization: u8, thread_id: u32) -> Con
     conn
 }
 
-fn sample(conn: &Connection, query: &String, num_queries: u64, stype: &String, thread_id: u32) -> Result<f32, postgres::Error> {
-   let start = SystemTime::now();
-   for _x in 1..num_queries {
-       if stype == "prepared" {
-           let prep = conn.prepare_cached(&query)?;
-           let _row = prep.query(&[&thread_id]);
-       } else if stype == "transactional" {
-           let trans = conn.transaction()?;
-           if query != "" {
-               let _row = trans.query(&query, &[&thread_id]);
-           }
-           let _res = trans.commit()?;
-       } else if stype == "prepared_transactional" {
-           let trans = conn.transaction()?;
-           if query != "" {
-               let prep = trans.prepare_cached(&query)?;
-               let _row = prep.query(&[&thread_id]);
-           }
-           let _res = trans.commit()?;
-       } else if query != "" {
-           let _row = &conn.query(&query, &[&thread_id]);
-       }
-   }
-   let end = SystemTime::now();
-   let duration_nanos = end.duration_since(start)
-       .expect("Time went backwards").as_nanos();
-   Ok(10.0_f32.powi(9) * num_queries as f32 / duration_nanos as f32)
+fn sample(conn: &Connection, query: &String, tps: u64, stype: &String, thread_id: u32) -> Result<u64, postgres::Error> {
+    let mut num_queries = tps / 10;
+    if num_queries < 1 {
+        num_queries = 1;
+    }
+    for _x in 1..num_queries {
+        if stype == "prepared" {
+            let prep = conn.prepare_cached(&query)?;
+            let _row = prep.query(&[&thread_id]);
+        } else if stype == "transactional" {
+            let trans = conn.transaction()?;
+            if query != "" {
+                let _row = trans.query(&query, &[&thread_id]);
+            }
+            let _res = trans.commit()?;
+        } else if stype == "prepared_transactional" {
+            let trans = conn.transaction()?;
+            if query != "" {
+                let prep = trans.prepare_cached(&query)?;
+                let _row = prep.query(&[&thread_id]);
+            }
+            let _res = trans.commit()?;
+        } else if query != "" {
+            let _row = &conn.query(&query, &[&thread_id]);
+        }
+    }
+    Ok(num_queries)
 }
 
-fn thread(thread_id: u32, tx: mpsc::Sender<f32>, thread_lock: std::sync::Arc<std::sync::RwLock<bool>> ) -> Result<(), Box<std::error::Error>>{
+fn thread(thread_id: u32, tx: mpsc::Sender<u64>, thread_lock: std::sync::Arc<std::sync::RwLock<bool>> ) -> Result<(), Box<std::error::Error>>{
     // println!("Thread {} started", thread_id);
     let args = parse_args()?;
 
@@ -222,6 +221,7 @@ fn thread(thread_id: u32, tx: mpsc::Sender<f32>, thread_lock: std::sync::Arc<std
     }
 
     let mut conn: Connection;
+    let mut num_queries: u64 = 0;
     conn = reconnect(&connect_string, initialization, thread_id);
     loop {
         if let Ok(done) = thread_lock.read() {
@@ -230,10 +230,11 @@ fn thread(thread_id: u32, tx: mpsc::Sender<f32>, thread_lock: std::sync::Arc<std
                 break;
             }
         }
+        let start = SystemTime::now();
         match sample(&conn, &query, tps, &stype, thread_id) {
             Ok(sample_tps) => {
                 tx.send(sample_tps)?;
-                tps = sample_tps as u64;
+                num_queries = sample_tps;
             },
             Err(_) => {
                 //println!("Error: {}", &err);
@@ -241,16 +242,19 @@ fn thread(thread_id: u32, tx: mpsc::Sender<f32>, thread_lock: std::sync::Arc<std
                 conn = reconnect(&connect_string, initialization, thread_id);
             },
         };
-
+        let end = SystemTime::now();
+        let duration_nanos = end.duration_since(start)
+            .expect("Time went backwards").as_nanos();
+        tps = (10.0_f32.powi(9) * num_queries as f32 / duration_nanos as f32) as u64;
     }
-    // println!("Thread {} stopped", thread_id);
     Ok(())
 }
 
-fn downscale(rx: mpsc::Receiver<f32>, tx: mpsc::Sender<f32>, thread_lock: std::sync::Arc<std::sync::RwLock<bool>>) -> Result<(), Box<std::error::Error>>{
+fn downscale(rx: mpsc::Receiver<u64>, tx: mpsc::Sender<u64>, thread_lock: std::sync::Arc<std::sync::RwLock<bool>>) -> Result<(), Box<std::error::Error>>{
     //With more threads (> 500) we have some issues, where the one main thread cannot consume messages fast enough.
     //This function can downscal from 25 messages to 1 message.
-    let mut sum: f32;
+    let mut sum: u64;
+    let wait = Duration::from_millis(10);
     loop {
         if let Ok(done) = thread_lock.read() {
             // done is true when main thread decides we are there
@@ -258,9 +262,9 @@ fn downscale(rx: mpsc::Receiver<f32>, tx: mpsc::Sender<f32>, thread_lock: std::s
                 break;
             }
         }
-        sum = 0_f32;
+        sum = 0;
         for _ in 0..25 {
-            match rx.recv_timeout(Duration::from_millis(10)) {
+            match rx.recv_timeout(wait) {
                 Ok(sample_tps) => {
                     sum += sample_tps;
                 },
@@ -273,7 +277,7 @@ fn downscale(rx: mpsc::Receiver<f32>, tx: mpsc::Sender<f32>, thread_lock: std::s
 }
 
 fn main() -> Result<(), Box<std::error::Error>> {
-    let mut sum_tps: f32;
+    let mut sum_trans: u64;
     let mut avg_tps: f32;
     let args = parse_args()?;
     let help = args.value_of("help")?;
@@ -318,8 +322,8 @@ fn main() -> Result<(), Box<std::error::Error>> {
     } else {
         let (tmp_tx, tmp_rx) = mpsc::channel();
         #[allow(unused_assignments)]
-        let mut downscale_rx: mpsc::Receiver<f32> = tmp_rx;
-        let mut downscale_tx: mpsc::Sender<f32> = tmp_tx;
+        let mut downscale_rx: mpsc::Receiver<u64> = tmp_rx;
+        let mut downscale_tx: mpsc::Sender<u64> = tmp_tx;
         for thread_id in 0..num_threads {
             if thread_id % 100 == 0 {
                 let (tmp_tx, tmp_rx) = mpsc::channel();
@@ -345,13 +349,13 @@ fn main() -> Result<(), Box<std::error::Error>> {
         num_samples = 1
     }
     for _ in 0..num_secs {
-        sum_tps = 0_f32;
+        sum_trans = 0;
         let start = SystemTime::now();
         let finished = start + Duration::new(1, 0);
         loop {
             for _ in 0..num_samples {
                 match rx.recv() {
-                    Ok(sample_tps) => sum_tps += sample_tps,
+                    Ok(sample_trans) => sum_trans += sample_trans,
                     Err(_error) => break,
                 }
             }
@@ -364,7 +368,7 @@ fn main() -> Result<(), Box<std::error::Error>> {
         let duration_nanos = end.duration_since(start)
             .expect("Time went backwards").as_nanos();
         let duration = duration_nanos as f32 / 10.0_f32.powi(9);
-        let calc_tps = sum_tps as f32 / duration as f32;
+        let calc_tps = sum_trans as f32 / duration as f32;
         avg_tps = calc_tps / num_threads as f32;
         println!("Average tps: {}", avg_tps);
         println!("Total tps: {}", calc_tps);
@@ -377,6 +381,7 @@ fn main() -> Result<(), Box<std::error::Error>> {
         *done = true;
     }
 
+    println!("Waiting for threads to be stopped");
     for thread_handle in threads {
         thread_handle.join().unwrap();
     }
@@ -387,11 +392,10 @@ fn main() -> Result<(), Box<std::error::Error>> {
             // println!("Stopping all threads");
             *done = true;
         }
+        println!("Waiting for downscale threads to be stopped");
         for thread_handle in downscale_threads {
             thread_handle.join().unwrap();
         }
     }
-
-
     Ok(())
 }
