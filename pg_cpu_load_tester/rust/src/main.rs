@@ -1,18 +1,32 @@
 extern crate postgres;
 extern crate args;
 extern crate getopts;
+extern crate chrono;
 
+use chrono::Utc;
 use postgres::{Connection, TlsMode};
 use std::{env, process};
 use getopts::Occur;
 use args::Args;
-use std::time::{SystemTime, Duration};
+use std::time::Duration;
 use std::thread;
 use std::sync::{mpsc, RwLock, Arc};
 use std::str::FromStr;
 
 const PROGRAM_DESC: &'static str = "generate cpu load on a Postgres cluster, and output the TPS.";
 const PROGRAM_NAME: &'static str = "pg_cpu_load";
+
+struct TransactDataSample {
+    samplemoment: chrono::NaiveDateTime,
+    lsn: String,
+    wal_bytes: f32,
+    num_transactions: f32,
+}
+
+fn duration(start: chrono::NaiveDateTime, end: chrono::NaiveDateTime) -> f32 {
+    let duration_nanos = (end - start).num_nanoseconds().unwrap();
+    duration_nanos as f32 / 10.0_f32.powi(9)
+}
 
 fn postgres_param(argument: &Result<String, args::ArgsError>, env_var_key: &String, default: &String) -> String {
     let mut return_val: String;
@@ -188,7 +202,7 @@ fn sample(conn: &Connection, query: &String, tps: u64, stype: &String, thread_id
     Ok(num_queries)
 }
 
-fn thread(thread_id: u32, tx: mpsc::Sender<u64>, thread_lock: std::sync::Arc<std::sync::RwLock<bool>> ) -> Result<(), Box<std::error::Error>>{
+fn thread_procedure(thread_id: u32, tx: mpsc::Sender<u64>, thread_lock: std::sync::Arc<std::sync::RwLock<bool>> ) -> Result<(), Box<std::error::Error>>{
     // println!("Thread {} started", thread_id);
     let args = parse_args()?;
 
@@ -222,6 +236,8 @@ fn thread(thread_id: u32, tx: mpsc::Sender<u64>, thread_lock: std::sync::Arc<std
 
     let mut conn: Connection;
     let mut num_queries: u64 = 0;
+    //Sleep 100 milliseconds
+    let sleeptime = std::time::Duration::from_millis(100);
     conn = reconnect(&connect_string, initialization, thread_id);
     loop {
         if let Ok(done) = thread_lock.read() {
@@ -230,7 +246,7 @@ fn thread(thread_id: u32, tx: mpsc::Sender<u64>, thread_lock: std::sync::Arc<std
                 break;
             }
         }
-        let start = SystemTime::now();
+        let start = Utc::now().naive_utc();
         match sample(&conn, &query, tps, &stype, thread_id) {
             Ok(sample_tps) => {
                 tx.send(sample_tps)?;
@@ -238,14 +254,12 @@ fn thread(thread_id: u32, tx: mpsc::Sender<u64>, thread_lock: std::sync::Arc<std
             },
             Err(_) => {
                 //println!("Error: {}", &err);
-                thread::sleep(Duration::new(1, 0));
+                thread::sleep(sleeptime);
                 conn = reconnect(&connect_string, initialization, thread_id);
             },
         };
-        let end = SystemTime::now();
-        let duration_nanos = end.duration_since(start)
-            .expect("Time went backwards").as_nanos();
-        tps = (10.0_f32.powi(9) * num_queries as f32 / duration_nanos as f32) as u64;
+        let end = Utc::now().naive_utc();
+        tps = (num_queries as f32 / duration(start, end)) as u64;
     }
     Ok(())
 }
@@ -253,16 +267,17 @@ fn thread(thread_id: u32, tx: mpsc::Sender<u64>, thread_lock: std::sync::Arc<std
 fn downscale(rx: mpsc::Receiver<u64>, tx: mpsc::Sender<u64>, thread_lock: std::sync::Arc<std::sync::RwLock<bool>>) -> Result<(), Box<std::error::Error>>{
     //With more threads (> 500) we have some issues, where the one main thread cannot consume messages fast enough.
     //This function can downscal from 25 messages to 1 message.
-    let mut sum: u64;
+    let mut sum: u64 = 0;
     let wait = Duration::from_millis(10);
     loop {
-        if let Ok(done) = thread_lock.read() {
-            // done is true when main thread decides we are there
-            if *done {
-                break;
-            }
-        }
-        sum = 0;
+        match thread_lock.read() {
+            Ok(done) => {
+                if *done {
+                        break;
+                }
+            },
+            Err(_err) => (),
+        };
         for _ in 0..25 {
             match rx.recv_timeout(wait) {
                 Ok(sample_tps) => {
@@ -271,14 +286,17 @@ fn downscale(rx: mpsc::Receiver<u64>, tx: mpsc::Sender<u64>, thread_lock: std::s
                 Err(_err) => (),
             };
         }
-        tx.send(sum)?;
+        match tx.send(sum) {
+            Ok(_) => sum = 0,
+            Err(_err) => (),
+        };
     }
     Ok(())
 }
 
 fn main() -> Result<(), Box<std::error::Error>> {
     let mut sum_trans: u64;
-    let mut avg_tps: f32;
+    let mut threads_avg_tps: f32;
     let args = parse_args()?;
     let help = args.value_of("help")?;
     if help {
@@ -296,7 +314,6 @@ fn main() -> Result<(), Box<std::error::Error>> {
         panic!("Option QTYPE-empty only works with transactions.");
     }
 
-
     let num_threads: String = args.value_of("parallel")?;
     let num_threads = u32::from_str(&num_threads)?;
     let num_secs: String = args.value_of("num_secs")?;
@@ -309,13 +326,18 @@ fn main() -> Result<(), Box<std::error::Error>> {
     let mut num_samples: u32;
     let mut downscale_threads = Vec::with_capacity(num_threads as usize);
 
+    let connect_string = postgres_connect_string(args);
+    let mut conn: Connection;
+    conn = reconnect(&connect_string, 0, 0);
+    let prep = conn.prepare_cached("SELECT now()::timestamp as samplemmoment, pg_current_wal_lsn()::varchar as lsn, (pg_current_wal_lsn() - $1::varchar::pg_lsn)::real as walbytes, (select sum(xact_commit+xact_rollback)::real FROM pg_stat_database) as transacts")?;
+
     if num_threads < 200 {
         for thread_id in 0..num_threads {
             let thread_tx = tx.clone();
             let thread_lock = rw_lock.clone();
-            let thread_handle =  thread::spawn(move || {
-                thread(thread_id, thread_tx, thread_lock).unwrap();
-            });
+            let thread_handle =  thread::Builder::new().name(format!("child{}", thread_id).to_string()).spawn(move || {
+                thread_procedure(thread_id, thread_tx, thread_lock).unwrap();
+            }).unwrap();
             threads.push(thread_handle);
         }
         num_samples = num_threads / 10;
@@ -331,53 +353,79 @@ fn main() -> Result<(), Box<std::error::Error>> {
                 downscale_tx = tmp_tx;
                 let thread_lock = rw_downscaler_lock.clone();
                 let thread_tx = tx.clone();
-                let thread_handle =  thread::spawn(move || {
+                let thread_handle =  thread::Builder::new().name(format!("downscale{}", thread_id).to_string()).spawn(move || {
                     downscale(downscale_rx, thread_tx, thread_lock).unwrap();
-                });
+                }).unwrap();
                 downscale_threads.push(thread_handle);
             }
             let thread_tx = downscale_tx.clone();
             let thread_lock = rw_lock.clone();
-            let thread_handle =  thread::spawn(move || {
-                thread(thread_id, thread_tx, thread_lock).unwrap();
-            });
+            let thread_handle =  thread::Builder::new().name(format!("child{}", thread_id).to_string()).spawn(move || {
+                thread_procedure(thread_id, thread_tx, thread_lock).unwrap();
+            }).unwrap();
             threads.push(thread_handle);
         }
         num_samples = num_threads / 250;
     }
+
     if num_samples < 1 {
         num_samples = 1
     }
-    for _ in 0..num_secs {
+    let sample_period = chrono::Duration::seconds(1);
+
+    let mut prev_sample = TransactDataSample {
+        samplemoment: Utc::now().naive_utc(),
+        lsn: "0/0".to_string(),
+        wal_bytes: 0.0_f32,
+        num_transactions: 0.0_f32,
+    };
+    let wait = Duration::from_millis(100);
+
+    println!("Date       time (sec)      | Sample period |          Threads         |              Postgres         |");
+    println!("                           |               | Average TPS | Total TPS  |        tps   |          wal/s |");
+    //        2019-06-24 11:33:23.437502       1.018000      105.090     10508.950      16888.312            0.000
+
+    for x in 0..num_secs {
+        let start = Utc::now().naive_utc();
+        let finished = start + sample_period;
         sum_trans = 0;
-        let start = SystemTime::now();
-        let finished = start + Duration::new(1, 0);
         loop {
             for _ in 0..num_samples {
-                match rx.recv() {
+                match rx.recv_timeout(wait) {
                     Ok(sample_trans) => sum_trans += sample_trans,
                     Err(_error) => break,
                 }
             }
-            let now = SystemTime::now();
-            if now > finished {
+            if Utc::now().naive_utc() > finished {
                 break;
             }
         }
-        let end = SystemTime::now();
-        let duration_nanos = end.duration_since(start)
-            .expect("Time went backwards").as_nanos();
-        let duration = duration_nanos as f32 / 10.0_f32.powi(9);
-        let calc_tps = sum_trans as f32 / duration as f32;
-        avg_tps = calc_tps / num_threads as f32;
-        println!("Average tps: {}", avg_tps);
-        println!("Total tps: {}", calc_tps);
-        println!("Timeframe (s): {}", duration);
+        let end = Utc::now().naive_utc();
+        let calc_tps = sum_trans as f32 / duration(start, end);
+        threads_avg_tps = calc_tps / num_threads as f32;
+
+        let rows = prep.query(&[&prev_sample.lsn])?;
+        assert_eq!(rows.len(), 1);
+        let row = rows.get(0);
+        let sample = TransactDataSample {
+            samplemoment: row.get(0),
+            lsn: row.get(1),
+            wal_bytes: row.get(2),
+            num_transactions: row.get(3),
+        };
+        let now = sample.samplemoment;
+        if x > 1 {
+            let postgres_duration = duration(prev_sample.samplemoment, sample.samplemoment);
+            let postgres_wps = (sample.wal_bytes - prev_sample.wal_bytes) as f32 / postgres_duration;
+            let postgres_tps = (sample.num_transactions - prev_sample.num_transactions) as f32 / postgres_duration;
+            let thread_duration = (end-start).num_milliseconds() as f32 / 1000_f32;
+            println!("{0} {1:15.6} {2:>12.3} {3:>13.3} {4:>14.3} {5:>16.3}", now, thread_duration, threads_avg_tps, calc_tps, postgres_tps, postgres_wps);
+        }
+        prev_sample = sample;
     }
 
     let main_lock = rw_lock.clone();
     if let Ok(mut done) = main_lock.write() {
-        // println!("Stopping all threads");
         *done = true;
     }
 
