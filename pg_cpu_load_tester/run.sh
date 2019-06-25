@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 PGDATA=${PGDATA:-/var/lib/pgsql/11/data}
+PGWAL=${PGWAL:-"${PGDATA}/pg_wal"}
 PGCONF=${PGCONF:-/host/conf.d}
 PCL_PARALLEL=${PCL_PARALLEL:-10}
 
@@ -11,10 +12,15 @@ read -ra ARR_PCL_MODES <<< "${PCL_MODES}"
 
 mkdir -p "${PGDATA}"
 chown -R postgres: "${PGDATA}"
+if [ "${PGWAL}" != "${PGDATA}/pg_wal" ]; then
+  PGWALOPTS=" --waldir=${PGWAL}"
+else
+  PGWALOPTS=""
+fi
 PCL_LOGDIR=${PCL_LOGDIR:-/host/logs/$(date +%s)}
 mkdir -p "${PCL_LOGDIR}"
 chmod 777 "${PCL_LOGDIR}"
-su - postgres bash -c "initdb -D ${PGDATA}"
+su - postgres bash -c "initdb -D ${PGDATA} ${PGWALOPTS}"
 if [ -d "${PGCONF}" ]; then
 	PGCONFDEST="${PGDATA}/"$(basename "${PGCONF}")
 	cp -av "${PGCONF}" "${PGCONFDEST}"
@@ -38,4 +44,4 @@ for PCL_TYPE in "${ARR_PCL_TYPES[@]}"; do
 		su - postgres bash -c "${CMD}" >> "${LOGFILE}" 2>&1
 	done
 done
-su - postgres bash -c 'pg_ctl stop'
+su - postgres bash -c "pg_ctl stop -D ${PGDATA}"
