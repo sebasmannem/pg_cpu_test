@@ -32,6 +32,7 @@ if [ -d "${PGCONF}" ]; then
 fi
 echo "max_connections = $((PCL_PARALLEL+20))" >> "${PGDATA}/postgresql.conf"
 su - postgres bash -c "pg_ctl start -D ${PGDATA} && { until pg_isready; do sleep 1; done ; }"
+su - postgres bash -c "psql -tc \"select name||'='''||setting||'''''' from pg_settings;\"" > "${PCL_LOGDIR}/pg_config"
 set > "${PCL_LOGDIR}/env"
 for PCL_TYPE in "${ARR_PCL_TYPES[@]}"; do
 	for PCL_MODE in "${ARR_PCL_MODES[@]}"; do
