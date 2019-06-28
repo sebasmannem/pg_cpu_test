@@ -239,6 +239,18 @@ fn thread_procedure(thread_id: u32, tx: mpsc::Sender<u64>, thread_lock: std::syn
     //Sleep 100 milliseconds
     let sleeptime = std::time::Duration::from_millis(100);
     conn = reconnect(&connect_string, initialization, thread_id);
+    /*
+    loop {
+        if let Ok(wait) = thread_lock.read() {
+            // done is true when main thread decides we are there
+            if ! *wait {
+                break;
+            }
+        }
+        thread::sleep(sleeptime);
+    }
+    */
+
     loop {
         if let Ok(done) = thread_lock.read() {
             // done is true when main thread decides we are there
@@ -320,6 +332,7 @@ fn main() -> Result<(), Box<std::error::Error>> {
     let num_secs = u32::from_str(&num_secs)?;
 
     let (tx, rx) = mpsc::channel();
+    //let rw_lock = Arc::new(RwLock::new(true));
     let rw_lock = Arc::new(RwLock::new(false));
     let rw_downscaler_lock = Arc::new(RwLock::new(false));
     let mut threads = Vec::with_capacity(num_threads as usize);
@@ -331,6 +344,7 @@ fn main() -> Result<(), Box<std::error::Error>> {
     conn = reconnect(&connect_string, 0, 0);
     let prep = conn.prepare_cached("SELECT now()::timestamp as samplemmoment, pg_current_wal_lsn()::varchar as lsn, (pg_current_wal_lsn() - $1::varchar::pg_lsn)::real as walbytes, (select sum(xact_commit+xact_rollback)::real FROM pg_stat_database) as transacts")?;
 
+    println!("Initializing all threads");
     if num_threads < 200 {
         for thread_id in 0..num_threads {
             let thread_tx = tx.clone();
@@ -368,6 +382,23 @@ fn main() -> Result<(), Box<std::error::Error>> {
         num_samples = num_threads / 250;
     }
 
+    /*
+    thread::sleep(std::time::Duration::from_secs(1000));
+
+    println!("Starting all threads");
+    let sleeptime = std::time::Duration::from_secs(1);
+    let main_lock = rw_lock.clone();
+    loop {
+        match main_lock.try_write() {
+            Ok(mut wait) => {
+                *wait = false;
+                break;
+            },
+            Err(_) => thread::sleep(sleeptime),
+        };
+    }
+    */
+
     if num_samples < 1 {
         num_samples = 1
     }
@@ -379,7 +410,7 @@ fn main() -> Result<(), Box<std::error::Error>> {
         wal_bytes: 0.0_f32,
         num_transactions: 0.0_f32,
     };
-    let wait = Duration::from_millis(100);
+    let mut wait = Duration::from_millis(100);
 
     println!("Date       time (sec)      | Sample period |          Threads         |              Postgres         |");
     println!("                           |               | Average TPS | Total TPS  |        tps   |          wal/s |");
@@ -429,21 +460,13 @@ fn main() -> Result<(), Box<std::error::Error>> {
         *done = true;
     }
 
-    println!("Waiting for threads to be stopped");
-    for thread_handle in threads {
-        thread_handle.join().unwrap();
-    }
+    wait = num_threads * wait / 10;
 
-    if num_threads >= 200 {
-        let main_downscaler_lock = rw_downscaler_lock.clone();
-        if let Ok(mut done) = main_downscaler_lock.write() {
-            // println!("Stopping all threads");
-            *done = true;
-        }
-        println!("Waiting for downscale threads to be stopped");
-        for thread_handle in downscale_threads {
-            thread_handle.join().unwrap();
-        }
-    }
-    Ok(())
+    println!("Lets give the threads some time to stop");
+    thread::sleep(wait);
+
+    println!("Finished");
+    ::std::process::exit(0);
+
+    //Ok(())
 }
