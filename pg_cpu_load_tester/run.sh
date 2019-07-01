@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+#set -e
 /sar.sh &
 SARPID=$!
 PGDATA=${PGDATA:-/var/lib/pgsql/11/data}
@@ -34,6 +34,7 @@ echo "max_connections = $((PCL_PARALLEL+20))" >> "${PGDATA}/postgresql.conf"
 su - postgres bash -c "pg_ctl start -D ${PGDATA} && { until pg_isready; do sleep 1; done ; }"
 su - postgres bash -c "psql -tc \"select name||'='''||setting||'''''' from pg_settings;\"" > "${PCL_LOGDIR}/pg_config"
 set > "${PCL_LOGDIR}/env"
+set +e
 for PCL_TYPE in "${ARR_PCL_TYPES[@]}"; do
 	for PCL_MODE in "${ARR_PCL_MODES[@]}"; do
 		[ "${PCL_TYPE}" = 'empty' -a "${PCL_MODE}" = 'direct' -o "${PCL_MODE}" = 'prepared' ] && continue
