@@ -30,6 +30,8 @@ export PCL_TYPES="empty simple read write"
 export PCL_MODES="transactional prepared_transactional"
 export PCL_NUMSEC=600
 
+docker rm pg_cpu_load_tester || true
+
 echo 'fsync = on' > conf.d/fsync.conf
 run_tests "baseline"
 
