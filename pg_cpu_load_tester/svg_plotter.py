@@ -39,7 +39,7 @@ SPLITTER_RE=re.compile('[ \t]+')
 PCL_PARALLEL_RE=re.compile('PCL_PARALLEL=([0-9]+)')
 #logs.default/1561767352/pg_cpu_load_empty_transactional.log
 
-PCL_INFO_RE=re.compile('logs.({0})/[0-9]+/pg_cpu_load_({1})_({2}).log$'.format('|'.join(PCL_TESTS), '|'.join(PCL_TYPES), '|'.join(PCL_MODES)))
+PCL_INFO_RE=re.compile('(logs.(?P<PCL_SYSTEM>[0-9a-zA-Z]*)/)?logs.(?P<PCL_TEST>{0})/[0-9]+/pg_cpu_load_(?P<PCL_TYPE>{1})_(?P<PCL_MODE>{2}).log$'.format('|'.join(PCL_TESTS), '|'.join(PCL_TYPES), '|'.join(PCL_MODES)))
 
 plots_info = {}
 
@@ -64,9 +64,7 @@ for filepath in args.files:
 
     m = PCL_INFO_RE.search(filepath)
     if m:
-        plot_info['PCL_TEST'] = m.group(1)
-        plot_info['PCL_TYPE'] = m.group(2)
-        plot_info['PCL_MODE'] = m.group(3)
+        plot_info.update(m.groupdict())
     else:
         sys.stderr.write('File {} does not match re {}. SKipping...\n'.format(filepath, PCL_INFO_RE))
         continue
@@ -88,12 +86,17 @@ for filepath in args.files:
                 print(cols[4], cols[5])
                 raise(err)
 
+    if not thread_tps_list:
+        print('{0} does not contain any data'.format(filepath))
+        continue
     plot_info['THREAD_AVG'] = sum(thread_tps_list) / len(thread_tps_list)
     plot_info['THREAD_STDEV'] = statistics.stdev(thread_tps_list)
     plot_info['PG_AVG'] = sum(pg_tps_list) / len(pg_tps_list)
     plot_info['PG_STDEV'] = statistics.stdev(pg_tps_list)
     plot_info['PCL_PARALLEL'] = int(plot_info['PCL_PARALLEL'])
-    print('{PCL_TEST:14s} {PCL_TYPE:10s} {PCL_MODE:22s} {PCL_PARALLEL:4d} {THREAD_AVG:11.3f} {THREAD_STDEV:11.3f} {PG_AVG:11.3f} {PG_STDEV:11.3f}'.format(**plot_info))
+    if not plot_info['PCL_SYSTEM']:
+        plot_info['PCL_SYSTEM'] = 'unknown'
+    print('{PCL_SYSTEM:14s} {PCL_TEST:14s} {PCL_TYPE:10s} {PCL_MODE:22s} {PCL_PARALLEL:4d} {THREAD_AVG:11.3f} {THREAD_STDEV:11.3f} {PG_AVG:11.3f} {PG_STDEV:11.3f}'.format(**plot_info))
 
     if args.recreate or not os.path.exists(filepath+".svg"):
         # Initialize the graph
@@ -106,3 +109,4 @@ for filepath in args.files:
         ax.set_ylabel('Tps')
         ax.legend()
         fig.savefig(filepath+".svg")
+        plt.close(fig)
