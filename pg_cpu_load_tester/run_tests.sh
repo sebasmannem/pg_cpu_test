@@ -13,15 +13,20 @@ function cleanup_old_dir() {
 function run_tests() {
     TESTNAME=$1
     DOCKEREXTRAOPTS="$2"
-    cleanup_old_dir "${TESTNAME}"
-    mkdir "./logs.${TESTNAME}"
-    cleanup_old_dir "logs"
+    TEST_LOGS_DIR="./logs.${PCL_SYSTEMNAME}/logs.${TESTNAME}"
+    #cleanup_old_dir "${TEST_LOGS_DIR}"
+    mkdir -p "${TEST_LOGS_DIR}"
 
-    ln -s "./logs.${TESTNAME}" logs
+    cleanup_old_dir "logs"
+    ln -s "${TEST_LOGS_DIR}" logs
     for PCL_PARALLEL in 1 2 5 10 20 50 100 200 500 1000 ; do
+      if [ -f "logs/${PCL_PARALLEL}/sar" ]; then
+        echo "'logs/${PCL_PARALLEL}/sar' already exists, skipping this run"
+        continue
+      fi
       echo "Running $TESTNAME with $PCL_PARALLEL threads"
       export PCL_PARALLEL
-      docker run -ti --rm -v $PWD:/host -e PCL_PARALLEL -e PCL_TYPES -e PCL_MODES -e PCL_NUMSEC -e PGDATA --name pg_cpu_load_tester $DOCKEREXTRAOPTS pg_cpu_load_tester:latest
+      docker run -ti --rm -v $PWD:/host -e PCL_PARALLEL -e PCL_TYPES -e PCL_MODES -e PCL_NUMSEC -e PGDATA --name pg_cpu_load_tester $DOCKEREXTRAOPTS pg_cpu_load_tester:latest /host/run.sh
     done
 }
 
@@ -29,6 +34,7 @@ function run_tests() {
 export PCL_TYPES="empty simple read write"
 export PCL_MODES="transactional prepared_transactional"
 export PCL_NUMSEC=600
+export PCL_SYSTEMNAME=${PCL_SYSTEMNAME:-unknown}
 
 docker rm pg_cpu_load_tester || true
 

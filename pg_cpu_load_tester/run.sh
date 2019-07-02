@@ -19,7 +19,7 @@ if [ "${PGWAL}" != "${PGDATA}/pg_wal" ]; then
 else
   PGWALOPTS=""
 fi
-PCL_LOGDIR=${PCL_LOGDIR:-/host/logs/$(date +%s)}
+PCL_LOGDIR=${PCL_LOGDIR:-/host/logs/${PCL_PARALLEL}}
 mkdir -p "${PCL_LOGDIR}"
 chmod 777 "${PCL_LOGDIR}"
 su - postgres bash -c "initdb -D ${PGDATA} ${PGWALOPTS}"
@@ -38,12 +38,13 @@ set +e
 for PCL_TYPE in "${ARR_PCL_TYPES[@]}"; do
 	for PCL_MODE in "${ARR_PCL_MODES[@]}"; do
 		[ "${PCL_TYPE}" = 'empty' -a "${PCL_MODE}" = 'direct' -o "${PCL_MODE}" = 'prepared' ] && continue
+		LOGFILE="${PCL_LOGDIR}/pg_cpu_load_${PCL_TYPE}_${PCL_MODE}.log"
+		[ -f "${LOGFILE}" ] && continue
 		CMD="/pg_cpu_load_c7"
 		CMD+=" --parallel ${PCL_PARALLEL:-10}"
 		CMD+=" --num_secs ${PCL_NUMSEC:-600}"
 		CMD+=" --query_type ${PCL_TYPE}"
 		CMD+=" --statement_type ${PCL_MODE}"
-		LOGFILE="${PCL_LOGDIR}/pg_cpu_load_${PCL_TYPE}_${PCL_MODE}.log"
 		echo "${LOGFILE}"
 		su - postgres bash -c "${CMD}" >> "${LOGFILE}" 2>&1
 	done
