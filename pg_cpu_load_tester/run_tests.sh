@@ -20,8 +20,8 @@ function run_tests() {
     cleanup_old_dir "logs"
     ln -s "${TEST_LOGS_DIR}" logs
     for PCL_PARALLEL in 1 2 5 10 20 50 100 200 500 1000 ; do
-      if [ -f "logs/${PCL_PARALLEL}/sar" ]; then
-        echo "'logs/${PCL_PARALLEL}/sar' already exists, skipping this run"
+      if [ -f "${TEST_LOGS_DIR}/${PCL_PARALLEL}/sar" ]; then
+        echo "'${TEST_LOGS_DIR}/${PCL_PARALLEL}/sar' already exists, skipping this run"
         continue
       fi
       echo "Running $TESTNAME with $PCL_PARALLEL threads"
@@ -46,18 +46,18 @@ run_tests "no_fsync"
 echo 'fsync = on' > conf.d/fsync.conf
 
 export PGDATA=/pgsql
-run_tests "tmpfs" "--mount type=tmpfs,destination=/pgsql"
+run_tests "tmpfs" "--tmpfs /pgsql"
 unset PDATA
 export PGDATA
 
 export PGWAL=/pgsql/pg_wal
-run_tests "wal_tmpfs" "--mount type=tmpfs,destination=/pgsql"
+run_tests "wal_tmpfs" "--tmpfs /pgsql"
 unset PGWAL
 export PGWAL
 
 export PGDATA=/pgsql
 echo 'fsync = off' > conf.d/fsync.conf
-run_tests "no_fsync_tmpfs" "--mount type=tmpfs,destination=/pgsql"
+run_tests "no_fsync_tmpfs" "--tmpfs /pgsql"
 echo 'fsync = on' > conf.d/fsync.conf
 unset PDATA
 export PGDATA
