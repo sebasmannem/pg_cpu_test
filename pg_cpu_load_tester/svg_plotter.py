@@ -43,7 +43,7 @@ PCL_INFO_RE=re.compile('(logs.(?P<PCL_SYSTEM>[0-9a-zA-Z]*)/)?logs.(?P<PCL_TEST>{
 
 plots_info = {}
 
-print('test           querytype  query_mode          threads  thread_avg  thread_std      pg_avg    pg_stdev')
+print('system         test           querytype  query_mode          threads  thread_avg  thread_std      pg_avg    pg_stdev')
 for filepath in args.files:
     filedir = os.path.dirname(filepath)
     envfile = os.path.join(filedir, 'env')
