@@ -39,11 +39,11 @@ SPLITTER_RE=re.compile('[ \t]+')
 PCL_PARALLEL_RE=re.compile('PCL_PARALLEL=([0-9]+)')
 #logs.default/1561767352/pg_cpu_load_empty_transactional.log
 
-PCL_INFO_RE=re.compile('(logs.(?P<PCL_SYSTEM>[0-9a-zA-Z]*)/)?logs.(?P<PCL_TEST>{0})/[0-9]+/pg_cpu_load_(?P<PCL_TYPE>{1})_(?P<PCL_MODE>{2}).log$'.format('|'.join(PCL_TESTS), '|'.join(PCL_TYPES), '|'.join(PCL_MODES)))
+PCL_INFO_RE=re.compile('(logs.(?P<PCL_SYSTEM>[0-9a-zA-Z_]*)/)?logs.(?P<PCL_TEST>{0})/[0-9]+/pg_cpu_load_(?P<PCL_TYPE>{1})_(?P<PCL_MODE>{2}).log$'.format('|'.join(PCL_TESTS), '|'.join(PCL_TYPES), '|'.join(PCL_MODES)))
 
 plots_info = {}
 
-print('system         test           querytype  query_mode          threads  thread_avg  thread_std      pg_avg    pg_stdev')
+print('system         test           querytype  query_mode             threads  thread_avg  thread_std      pg_avg    pg_stdev')
 for filepath in args.files:
     filedir = os.path.dirname(filepath)
     envfile = os.path.join(filedir, 'env')
@@ -96,7 +96,7 @@ for filepath in args.files:
     plot_info['PCL_PARALLEL'] = int(plot_info['PCL_PARALLEL'])
     if not plot_info['PCL_SYSTEM']:
         plot_info['PCL_SYSTEM'] = 'unknown'
-    print('{PCL_SYSTEM:14s} {PCL_TEST:14s} {PCL_TYPE:10s} {PCL_MODE:22s} {PCL_PARALLEL:4d} {THREAD_AVG:11.3f} {THREAD_STDEV:11.3f} {PG_AVG:11.3f} {PG_STDEV:11.3f}'.format(**plot_info))
+    print('{PCL_SYSTEM:14s} {PCL_TEST:14s} {PCL_TYPE:10s} {PCL_MODE:22s} {PCL_PARALLEL:7d} {THREAD_AVG:11.3f} {THREAD_STDEV:11.3f} {PG_AVG:11.3f} {PG_STDEV:11.3f}'.format(**plot_info))
 
     if args.recreate or not os.path.exists(filepath+".svg"):
         # Initialize the graph

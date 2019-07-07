@@ -37,7 +37,7 @@ set > "${PCL_LOGDIR}/env"
 set +e
 for PCL_TYPE in "${ARR_PCL_TYPES[@]}"; do
 	for PCL_MODE in "${ARR_PCL_MODES[@]}"; do
-		[ "${PCL_TYPE}" = 'empty' -a "${PCL_MODE}" = 'direct' -o "${PCL_MODE}" = 'prepared' ] && continue
+		[ "${PCL_TYPE}" = 'empty' -a \( "${PCL_MODE}" = 'direct' -o "${PCL_MODE}" = 'prepared' \) ] && continue
 		LOGFILE="${PCL_LOGDIR}/pg_cpu_load_${PCL_TYPE}_${PCL_MODE}.log"
 		[ -f "${LOGFILE}" ] && continue
 		CMD="/pg_cpu_load_c7"

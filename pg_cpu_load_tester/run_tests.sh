@@ -32,7 +32,7 @@ function run_tests() {
 
 # Just an example of running the tests
 export PCL_TYPES="empty simple read write"
-export PCL_MODES="transactional prepared_transactional"
+export PCL_MODES="direct prepared transactional prepared_transactional"
 export PCL_NUMSEC=600
 export PCL_SYSTEMNAME=${PCL_SYSTEMNAME:-unknown}
 

@@ -27,7 +27,7 @@ The repo contains some bash scripts, a Docker file, and a testprogram written in
     * { number of PCL_MODES} *
     * { number of PCL_TYPES } *
     * { number of PCL_PARALLEL }.
-  * Current setting should take about 13 hours and 20 minutes
+  * Current setting should take about 26 hours and 40 minutes
 * You can summarize the data
   * with `find "logs.${PCL_SYSTEMNAME}" -name pg_cpu_load*.log | xargs ./svg_plotter.py`
   * which will output average numbers and create svg images of very run
