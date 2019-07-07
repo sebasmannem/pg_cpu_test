@@ -25,11 +25,12 @@ The repo contains some bash scripts, a Docker file, and a testprogram written in
 * Run ./run_tests.sh inside a screen session
 * Wait for all tests to finish
   * which takes about
-    * { PCL_NUMSEC } seconds *
+    * { number of tests} (baseline, tmpfs, wal_tmpfs, no_fsync, no_fsync_tmps)
     * { number of PCL_MODES} *
     * { number of PCL_TYPES } *
-    * { number of PCL_PARALLEL }.
-  * Current setting should take about 26 hours and 40 minutes
+    * { number of PCL_PARALLEL } *
+    * { PCL_NUMSEC } seconds *
+  * Current setting should take 5 * 4 * 4 * 10 * 600 which is  about 133 hours, so you want to bring this down.
 * You can summarize the data
   * with `find "logs.${PCL_SYSTEMNAME}" -name pg_cpu_load*.log | xargs ./svg_plotter.py`
   * which will output average numbers and create svg images of very run
