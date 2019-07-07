@@ -11,6 +11,8 @@ The idea is to compare
 The repo contains some bash scripts, a Docker file, and a testprogram written in GoLang and later rewritten in rust.
 
 ## Installation
+* Instal and start docker
+* Run with selinux off
 * Download this folder to your test system
 * cd into the pg_cpu_load_tester folder
 * Build the Docker container with `docker build --rm -t pg_cpu_load_tester .`
