@@ -5,6 +5,7 @@ authors = ["Sebastiaan Mannem <sebastiaan.mannem@enterprisedb.com>"]
 edition = "2018"
 
 [dependencies]
-postgres = "0.15"
+postgres = { version = "0.15", features = ["with-chrono"] }
 args = "2.2.0"
 getopts = "0.2.18"
+chrono = "0.4"
