@@ -39,7 +39,7 @@ SPLITTER_RE=re.compile('[ \t]+')
 PCL_PARALLEL_RE=re.compile('PCL_PARALLEL=([0-9]+)')
 #logs.default/1561767352/pg_cpu_load_empty_transactional.log
 
-PCL_INFO_RE=re.compile('(logs.(?P<PCL_SYSTEM>[0-9a-zA-Z_]*)/)?logs.(?P<PCL_TEST>{0})/[0-9]+/pg_cpu_load_(?P<PCL_TYPE>{1})_(?P<PCL_MODE>{2}).log$'.format('|'.join(PCL_TESTS), '|'.join(PCL_TYPES), '|'.join(PCL_MODES)))
+PCL_INFO_RE=re.compile('(logs.(?P<PCL_SYSTEM>[0-9a-zA-Z_]*)/)?logs.(?P<PCL_TEST>[0-9a-zA-Z_]*)/[0-9]+/pg_cpu_load_(?P<PCL_TYPE>{1})_(?P<PCL_MODE>{2}).log$'.format('|'.join(PCL_TESTS), '|'.join(PCL_TYPES), '|'.join(PCL_MODES)))
 
 plots_info = {}
 
