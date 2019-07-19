@@ -13,7 +13,7 @@ function cleanup_old_dir() {
 function run_tests() {
     TESTNAME=$1
     DOCKEREXTRAOPTS="$2"
-    TEST_LOGS_DIR="./logs.${PCL_SYSTEMNAME}/logs.${TESTNAME}"
+    TEST_LOGS_DIR="./logs.${PCL_SYSTEMNAME}_${PCL_POOLER}/logs.${TESTNAME}"
     #cleanup_old_dir "${TEST_LOGS_DIR}"
     mkdir -p "${TEST_LOGS_DIR}"
 
@@ -26,24 +26,21 @@ function run_tests() {
       fi
       echo "Running $TESTNAME with $PCL_PARALLEL threads"
       export PCL_PARALLEL
-      docker run -ti --rm -v $PWD:/host -e PCL_PARALLEL -e PCL_TYPES -e PCL_MODES -e PCL_NUMSEC -e PGDATA --name pg_cpu_load_tester $DOCKEREXTRAOPTS pg_cpu_load_tester:latest /host/run.sh
+      docker run -ti --rm -v $PWD:/host -e PCL_POOLER -e PCL_PARALLEL -e PCL_TYPES -e PCL_MODES -e PCL_NUMSEC -e PGDATA --name pg_cpu_load_tester $DOCKEREXTRAOPTS pg_cpu_load_tester:latest /host/run.sh
     done
 }
 
 # Just an example of running the tests
 export PCL_TYPES="empty simple read write"
-export PCL_MODES="direct prepared transactional prepared_transactional"
+export PCL_MODES="direct prepared"
 export PCL_NUMSEC=600
 export PCL_SYSTEMNAME=${PCL_SYSTEMNAME:-unknown}
+export PCL_POOLER=${PCL_POOLER:-postgres}
 
 docker rm pg_cpu_load_tester || true
 
 echo 'fsync = on' > conf.d/fsync.conf
 run_tests "baseline"
-
-echo 'fsync = off' > conf.d/fsync.conf
-run_tests "no_fsync"
-echo 'fsync = on' > conf.d/fsync.conf
 
 export PGDATA=/pgsql
 run_tests "tmpfs" "--tmpfs /pgsql"
@@ -54,6 +51,10 @@ export PGWAL=/pgsql/pg_wal
 run_tests "wal_tmpfs" "--tmpfs /pgsql"
 unset PGWAL
 export PGWAL
+
+echo 'fsync = off' > conf.d/fsync.conf
+run_tests "no_fsync"
+echo 'fsync = on' > conf.d/fsync.conf
 
 export PGDATA=/pgsql
 echo 'fsync = off' > conf.d/fsync.conf

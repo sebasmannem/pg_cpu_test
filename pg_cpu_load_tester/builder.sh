@@ -3,7 +3,7 @@ set -e
 chmod +x /sar.sh /builder.sh /run.sh /pg_cpu_load_c7
 
 yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm
-yum install -y postgresql11-server python-psycopg2 sysstat
+yum install -y postgresql11-server python-psycopg2 sysstat pgpool-II-11 pgbouncer
 echo 'export PGDATA=/var/lib/pgsql/11/data
 export PGDATABASE=postgres
 export PGHOST=127.0.0.1
@@ -13,4 +13,3 @@ export PGSSLMODE=disable
 
 export PATH=/usr/pgsql-11/bin:$PATH' > ~postgres/.bash_postgres
 echo '. ~/.bash_postgres' >> ~postgres/.bash_profile
-
