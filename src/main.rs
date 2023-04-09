@@ -4,7 +4,7 @@ extern crate getopts;
 extern crate chrono;
 
 use chrono::Utc;
-use postgres::{Connection, TlsMode};
+use postgres::{Client, tls};
 use std::{env, process};
 use getopts::Occur;
 use args::Args;
@@ -130,12 +130,12 @@ fn parse_args() -> Result<args::Args, args::ArgsError> {
     Ok(args)
 }
 
-fn connect(connect_string: String, initialization: u8, thread_id: u32) -> Result<Connection, postgres::Error> {
+fn connect(connect_string: String, initialization: u8, thread_id: u32) -> Result<Client, postgres::Error> {
 
-    let mut conn: Connection;
+    let mut client: Client;
     loop {
-        match Connection::connect(connect_string.clone(), TlsMode::None) {
-            Ok(my_conn) => conn = my_conn,
+        match Client::connect(connect_string.as_str(), tls::NoTls) {
+            Ok(my_conn) => client = my_conn,
             Err(_) => {
                 //println!("Error: {}", &err);
                 continue;
@@ -145,23 +145,23 @@ fn connect(connect_string: String, initialization: u8, thread_id: u32) -> Result
     }
 
     if initialization == 1 {
-        conn.execute("create temporary table my_temp_table (id oid)", &[])?;
-        conn.execute("insert into my_temp_table values($1)", &[&thread_id])?;
+        client.execute("create temporary table my_temp_table (id oid)", &[])?;
+        client.execute("insert into my_temp_table values($1)", &[&thread_id])?;
     } else if initialization == 2 {
-        conn.execute(&format!("create table if not exists my_table_{} (id oid)", thread_id), &[])?;
-        conn.execute(&format!("truncate my_table_{}", thread_id), &[])?;
-        conn.execute(&format!("insert into my_table_{} values($1)", thread_id), &[&thread_id])?;
+        client.execute(&format!("create table if not exists my_table_{} (id oid)", thread_id), &[])?;
+        client.execute(&format!("truncate my_table_{}", thread_id), &[])?;
+        client.execute(&format!("insert into my_table_{} values($1)", thread_id), &[&thread_id])?;
     }
 
-    Ok(conn)
+    Ok(client)
 }
 
-fn reconnect(connect_string: &String, initialization: u8, thread_id: u32) -> Connection {
+fn reconnect(connect_string: &String, initialization: u8, thread_id: u32) -> Client {
 
-    let mut conn: Connection;
+    let client: Client;
     loop {
         match connect(connect_string.clone(), initialization, thread_id) {
-            Ok(my_conn) => conn = my_conn,
+            Ok(my_client) => client = my_client,
             Err(_) => {
                 //println!("Error: {}", &err);
                 continue;
@@ -170,39 +170,39 @@ fn reconnect(connect_string: &String, initialization: u8, thread_id: u32) -> Con
         break;
     }
 
-    conn
+    client
 }
 
-fn sample(conn: &Connection, query: &String, tps: u64, stype: &String, thread_id: u32) -> Result<u64, postgres::Error> {
+fn sample( client: &mut Client, query: &String, tps: u64, stype: &String, thread_id: u32) -> Result<u64, postgres::Error> {
     let mut num_queries = tps / 10;
     if num_queries < 1 {
         num_queries = 1;
     }
     for _x in 1..num_queries {
         if stype == "prepared" {
-            let prep = conn.prepare_cached(&query)?;
-            let _row = prep.query(&[&thread_id]);
+            let prep = client.prepare(query)?;
+            let _row = client.query(&prep, &[&thread_id]);
         } else if stype == "transactional" {
-            let trans = conn.transaction()?;
+            let mut trans = client.transaction()?;
             if query != "" {
-                let _row = trans.query(&query, &[&thread_id]);
+                let _row = trans.query(query, &[&thread_id]);
             }
             let _res = trans.commit()?;
         } else if stype == "prepared_transactional" {
-            let trans = conn.transaction()?;
+            let mut trans = client.transaction()?;
             if query != "" {
-                let prep = trans.prepare_cached(&query)?;
-                let _row = prep.query(&[&thread_id]);
+                let prep = trans.prepare(&query)?;
+                let _row = trans.query(&prep, &[&thread_id]);
             }
             let _res = trans.commit()?;
         } else if query != "" {
-            let _row = &conn.query(&query, &[&thread_id]);
+            let _row = &client.query(query, &[&thread_id]);
         }
     }
     Ok(num_queries)
 }
 
-fn thread_procedure(thread_id: u32, tx: mpsc::Sender<u64>, thread_lock: std::sync::Arc<std::sync::RwLock<bool>> ) -> Result<(), Box<std::error::Error>>{
+fn thread_procedure(thread_id: u32, tx: mpsc::Sender<u64>, thread_lock: std::sync::Arc<std::sync::RwLock<bool>> ) -> Result<(), Box<dyn std::error::Error>>{
     // println!("Thread {} started", thread_id);
     let args = parse_args()?;
 
@@ -234,7 +234,7 @@ fn thread_procedure(thread_id: u32, tx: mpsc::Sender<u64>, thread_lock: std::syn
         initialization = 2;
     }
 
-    let mut conn: Connection;
+    let mut conn: Client;
     let mut num_queries: u64 = 0;
     //Sleep 100 milliseconds
     let sleeptime = std::time::Duration::from_millis(100);
@@ -259,7 +259,7 @@ fn thread_procedure(thread_id: u32, tx: mpsc::Sender<u64>, thread_lock: std::syn
             }
         }
         let start = Utc::now().naive_utc();
-        match sample(&conn, &query, tps, &stype, thread_id) {
+        match sample(&mut conn, &query, tps, &stype, thread_id) {
             Ok(sample_tps) => {
                 tx.send(sample_tps)?;
                 num_queries = sample_tps;
@@ -276,7 +276,7 @@ fn thread_procedure(thread_id: u32, tx: mpsc::Sender<u64>, thread_lock: std::syn
     Ok(())
 }
 
-fn downscale(rx: mpsc::Receiver<u64>, tx: mpsc::Sender<u64>, thread_lock: std::sync::Arc<std::sync::RwLock<bool>>) -> Result<(), Box<std::error::Error>>{
+fn downscale(rx: mpsc::Receiver<u64>, tx: mpsc::Sender<u64>, thread_lock: std::sync::Arc<std::sync::RwLock<bool>>) -> Result<(), Box<dyn std::error::Error>>{
     //With more threads (> 500) we have some issues, where the one main thread cannot consume messages fast enough.
     //This function can downscal from 25 messages to 1 message.
     let mut sum: u64 = 0;
@@ -306,7 +306,7 @@ fn downscale(rx: mpsc::Receiver<u64>, tx: mpsc::Sender<u64>, thread_lock: std::s
     Ok(())
 }
 
-fn main() -> Result<(), Box<std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut sum_trans: u64;
     let mut threads_avg_tps: f32;
     let args = parse_args()?;
@@ -340,9 +340,9 @@ fn main() -> Result<(), Box<std::error::Error>> {
     let mut downscale_threads = Vec::with_capacity(num_threads as usize);
 
     let connect_string = postgres_connect_string(args);
-    let mut conn: Connection;
-    conn = reconnect(&connect_string, 0, 0);
-    let prep = conn.prepare_cached("SELECT now()::timestamp as samplemmoment, pg_current_wal_lsn()::varchar as lsn, (pg_current_wal_lsn() - $1::varchar::pg_lsn)::real as walbytes, (select sum(xact_commit+xact_rollback)::real FROM pg_stat_database) as transacts")?;
+    let mut client: Client;
+    client = reconnect(&connect_string, 0, 0);
+    let prep = client.prepare("SELECT now()::timestamp as samplemmoment, pg_current_wal_lsn()::varchar as lsn, (pg_current_wal_lsn() - $1::varchar::pg_lsn)::real as walbytes, (select sum(xact_commit+xact_rollback)::real FROM pg_stat_database) as transacts")?;
 
     println!("Initializing all threads");
     if num_threads < 200 {
@@ -435,9 +435,9 @@ fn main() -> Result<(), Box<std::error::Error>> {
         let calc_tps = sum_trans as f32 / duration(start, end);
         threads_avg_tps = calc_tps / num_threads as f32;
 
-        let rows = prep.query(&[&prev_sample.lsn])?;
+        let rows = client.query(&prep, &[&prev_sample.lsn])?;
         assert_eq!(rows.len(), 1);
-        let row = rows.get(0);
+        let row = rows.get(0).unwrap();
         let sample = TransactDataSample {
             samplemoment: row.get(0),
             lsn: row.get(1),
